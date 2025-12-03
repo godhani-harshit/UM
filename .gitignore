@@ -1,0 +1,141 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual Environment
+.venv/
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Distribution / packaging
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+s3cmd/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+
+# Environments
+.env
+.env.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Logs
+logs/*.log
+*.log
+logs/compliance/*.json
+
+# Database
+*.db
+*.sqlite
+*.db-journal
+
+# Temporary files
+*.tmp
+*.temp
+
+# Secrets and keys
+*.key
+*.pem
+*.crt
+jwt-secret.key
+
+# Azure/AWS credentials
+.aws/
+.azure/
+
+# Local development
+local.db
+dev.db
+test.db
+
+# Certificates
+*.cer
+*.crt
+
+# Backup files
+*.bak
+*.backup
+
+# MyPy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Pyre type checker
+.pyre/
+
+# Alembic (keep versions directory but ignore specific files if needed)
+alembic/versions/*.pyc
+
+# Media and uploads (if any)
+media/
+uploads/
+static/uploads/
+
+# Visual Studio user settings
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# Solution-specific database files
+*.slnx.sqlite*
+
+# VS Code workspace state
+.vscode/*.json
+.vscode/vsworkspacestate.json
+
+# Ignore VS/VSCode workspace state
+.vs/
