@@ -1,25 +1,25 @@
-from datetime import datetime, timedelta
+import os
+from jose import jwt, JWTError
+from sqlalchemy.future import select
 from typing import Dict, List, Optional
+from datetime import datetime, timedelta
+
 from fastapi import HTTPException, Depends, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from sqlalchemy.future import select
-from jose import jwt, JWTError
-import os
 
-from app.core.database import get_sync_database_url
 from app.models.user import User
-from app.utils.security.azure_auth import validate_azure_token
 from app.models.role import Role
 from app.models.workflow import Workflow
-from app.models.role_workflows import RoleWorkflow  
-from app.models.role_permissions import RolePermission  
 from app.models.permission import Permission
-from app.services.activity_log_service import (
-    log_login_failed,
-    log_login_success,
-    log_auth_event,
-)
+from app.models.role_workflows import RoleWorkflow  
+from app.models.role_permissions import RolePermission
+
+from app.core.database import get_sync_database_url
+
 from app.schemas.auth import LoginResponse, RefreshTokenResponse
+
+from app.utils.security.azure_auth import validate_azure_token
+from app.services.activity_log_service import log_login_failed, log_login_success,log_auth_event
 
 
 # JWT Configuration

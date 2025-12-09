@@ -15,6 +15,9 @@ from app.api.v1.reference import router as reference_router
 from app.api.v1.dashboard import router as dashboard_router
 from app.api.v1.case_lock import router as case_lock_router
 from app.api.v1.users import router as users_router
+from app.api.v1.clinical import router as clinical_router
+from app.api.v1.medical_director import router as medical_director_router
+from app.api.v1.appeals_grievances import router as appeals_grievances_router
 
 # ============================================================================#
 # FASTAPI APP INITIALIZATION
@@ -25,7 +28,7 @@ app = FastAPI(
     version=s["VERSION"],
     docs_url="/docs",
     redoc_url="/redoc",
-    openapi_url="/openapi.json"
+    openapi_url="/openapi.json",
 )
 
 # ============================================================================#
@@ -36,8 +39,9 @@ app.add_middleware(
     allow_origins=s["CORS_ORIGINS"],
     allow_credentials=True,
     allow_methods=["*"],
-    allow_headers=["*"]
+    allow_headers=["*"],
 )
+
 
 @app.middleware("http")
 async def add_process_time_header(request: Request, call_next):
@@ -46,8 +50,11 @@ async def add_process_time_header(request: Request, call_next):
     response = await call_next(request)
     duration_ms = (time() - start_time) * 1000
     response.headers["X-Process-Time"] = f"{duration_ms:.2f}ms"
-    log_api_response(request.method, request.url.path, response.status_code, duration_ms)
+    log_api_response(
+        request.method, request.url.path, response.status_code, duration_ms
+    )
     return response
+
 
 # ============================================================================#
 # EVENT HANDLERS
@@ -55,6 +62,7 @@ async def add_process_time_header(request: Request, call_next):
 @app.on_event("startup")
 async def on_startup():
     init_db()
+
 
 # ============================================================================#
 # ROUTER REGISTRATION
@@ -66,6 +74,12 @@ app.include_router(intake_router, prefix="/api/v1", tags=["Intake"])
 app.include_router(reference_router, prefix="/api/v1", tags=["References"])
 app.include_router(case_lock_router, prefix="/api/v1", tags=["Intake"])
 app.include_router(users_router, prefix="/api/v1", tags=["Users"])
+app.include_router(clinical_router, prefix="/api/v1", tags=["Clinical Review"])
+app.include_router(medical_director_router, prefix="/api/v1", tags=["Medical Director"])
+app.include_router(
+    appeals_grievances_router, prefix="/api/v1", tags=["Appeals & Grievances"]
+)
+
 
 @app.get("/health", tags=["Health"])
 async def health_check():
@@ -76,10 +90,9 @@ async def health_check():
         "version": s["VERSION"],
         "environment": s["ENVIRONMENT"],
         "timestamp": datetime.utcnow().isoformat(),
-        "modules": {
-            "database": "healthy" if db_healthy else "degraded"
-        }
+        "modules": {"database": "healthy" if db_healthy else "degraded"},
     }
+
 
 # ============================================================================#
 # HELPER FUNCTIONS
@@ -90,9 +103,11 @@ async def check_database_health() -> bool:
     except Exception:
         return False
 
+
 # ============================================================================#
 # DEVELOPMENT ENTRYPOINT
 # ============================================================================#
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)

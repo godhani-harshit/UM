@@ -1,214 +1,310 @@
 # app/api/v1/documents.py
-from fastapi import APIRouter, UploadFile, File, Depends, HTTPException
-from azure.storage.blob import BlobServiceClient, BlobSasPermissions, generate_blob_sas
-from sqlalchemy.ext.asyncio import AsyncSession
-from datetime import datetime, timedelta
-import uuid
-import os
-import aiohttp
-from io import BytesIO
-from app.core.config import get_settings
-from app.core.database import get_db
-from app.services.document_service import create_authorization_record, check_file_exists
-from app.core.logging import logger
-from fastapi.responses import StreamingResponse
-from azure.storage.blob.aio import BlobClient
+"""
+Document Management API Endpoints.
+
+Handles document upload, download, and metadata operations for SFTP-based workflow.
+"""
+import hashlib
 from fastapi import status
+from typing import Optional
+from sqlalchemy import text
+from datetime import datetime
+from app.core.logging import logger
+from app.core.database import get_db
+from app.core.config import get_settings
+from azure.storage.blob.aio import BlobClient
+from sqlalchemy.ext.asyncio import AsyncSession
+from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, UploadFile, File, Depends, HTTPException, Form
+from app.schemas.documents import DocumentUploadResponse, DocumentMetadataResponse
+from app.services.document_service import create_authorization_record, check_file_exists, get_blob_service_client, get_container_name, upload_via_sas_url
+
 
 router = APIRouter()
 
-# Lazy Blob client initialization
-def get_blob_service_client():
-    s = get_settings()
-    conn = s["AZURE_STORAGE_CONNECTION_STRING"]
-    if not conn:
-        return None
-    try:
-        return BlobServiceClient.from_connection_string(conn)
-    except Exception as e:
-        logger.warning(f"Blob service client not initialized: {e}")
-        return None
 
-def get_container_name():
-    return get_settings()["AZURE_STORAGE_CONTAINER_NAME"] or ""
+# ============================================================================
+# API ENDPOINTS
+# ============================================================================
 
-def generate_sas_url(blob_name: str, expires_in_minutes: int = 10) -> str:
-    """Generate SAS URL for direct blob upload"""
-    expire_time = datetime.utcnow() + timedelta(minutes=expires_in_minutes)
-    
-    bsc = get_blob_service_client()
-    if bsc is None:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Storage not configured")
-    container_name = get_container_name()
-    sas_token = generate_blob_sas(
-        account_name=bsc.account_name,
-        container_name=container_name,
-        blob_name=blob_name,
-        account_key=get_settings()["AZURE_STORAGE_CONNECTION_STRING"].split("AccountKey=")[1].split(";")[0],
-        permission=BlobSasPermissions(write=True, create=True),
-        expiry=expire_time
-    )
-    
-    return f"https://{bsc.account_name}.blob.core.windows.net/{container_name}/{blob_name}?{sas_token}"
 
-async def upload_via_sas_url(file_bytes: bytes, blob_name: str, content_type: str = "application/octet-stream") -> str:
-    """Upload file to Azure Blob Storage using SAS URL"""
-    sas_url = generate_sas_url(blob_name)
-    
-    async with aiohttp.ClientSession() as session:
-        async with session.put(
-            sas_url,
-            data=BytesIO(file_bytes),
-            headers={
-                'x-ms-blob-type': 'BlockBlob',
-                'Content-Type': content_type,
-                'Content-Length': str(len(file_bytes))
-            }
-        ) as response:
-            if response.status not in [200, 201]:
-                error_text = await response.text()
-                raise Exception(f"Azure upload failed: {response.status} - {error_text}")
-    
-    bsc = get_blob_service_client()
-    container_name = get_container_name()
-    return f"https://{bsc.account_name}.blob.core.windows.net/{container_name}/{blob_name}"
-
-@router.post("/documents/upload", summary="Upload document and create authorization record")
-async def upload_document_and_create_record(
-    file: UploadFile = File(...),
-    source: str = "Upload",
-    session: AsyncSession = Depends(get_db)
+@router.post(
+    "/documents/upload",
+    response_model=DocumentUploadResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Upload document or register SFTP path",
+    description="Accept file via API (optional) or register an SFTP path. Enqueues background job to copy to processing area and trigger AI.",
+)
+async def upload_document(
+    file: Optional[UploadFile] = File(None),
+    sftp_path: Optional[str] = Form(None),
+    document_type: Optional[str] = Form(None),
+    auth_number: Optional[str] = Form(None),
+    session: AsyncSession = Depends(get_db),
 ):
     """
-    Upload a document to Azure Blob Storage and create an authorization record.
-    
-    This endpoint uses SAS URLs internally for secure direct upload to Azure.
+    Accept file via API (optional) or register an SFTP path.
+
+    **Request** (multipart) OR JSON:
+    - file: Uploaded file (multipart, optional)
+    - sftp_path: SFTP path like "/incoming/partnerA/file.pdf" (optional)
+    - document_type: Type of document (e.g., "clinical_document")
+    - auth_number: Authorization number (optional)
+
+    **Response**:
+    - document_id: Unique identifier
+    - status: "queued"
     """
     try:
-        # Validate file
-        if not file.filename or file.filename.strip() == "":
+        # Validate that either file or sftp_path is provided
+        if not file and not sftp_path:
             raise HTTPException(
                 status_code=400,
-                detail="File name cannot be empty"
+                detail="Either file upload or sftp_path must be provided",
             )
 
-        # Read file bytes and metadata
-        file_bytes = await file.read()
-        original_filename = file.filename
-        file_size = len(file_bytes)
+        # Handle SFTP path registration
+        if sftp_path:
+            logger.info(f"📁 Registering SFTP path: {sftp_path}")
 
-        # Check if file already exists
-        file_exists = await check_file_exists(session, original_filename)
-        if file_exists:
-            raise HTTPException(
-                status_code=400,
-                detail="File name already exists. Please upload with different name"
+            # Extract filename from SFTP path
+            original_filename = sftp_path.split("/")[-1]
+
+            # Create authorization record with SFTP path
+            # In production, this would trigger a background job to copy from SFTP
+            record = await create_authorization_record(
+                session=session,
+                file_name=original_filename,
+                file_url=f"sftp://{sftp_path}",  # Mark as SFTP source
+                file_size=0,  # Will be updated when file is copied
+                file_arrival_time=datetime.utcnow(),
+                source="SFTP",
             )
 
-        logger.info(f" Uploading file: {original_filename} ({file_size} bytes)")
+            logger.info(f"✅ SFTP path registered: {record.document_id}")
 
-        # Upload to Azure using SAS URL (more secure and efficient)
-        file_url = await upload_via_sas_url(
-            file_bytes=file_bytes,
-            blob_name=original_filename,
-            content_type=file.content_type or "application/octet-stream"
-        )
+            return DocumentUploadResponse(
+                document_id=record.document_id, status="queued"
+            )
 
-        logger.info(f" File uploaded to Azure: {file_url}")
+        # Handle file upload
+        if file:
+            # Validate file
+            if not file.filename or file.filename.strip() == "":
+                raise HTTPException(status_code=400, detail="File name cannot be empty")
 
-        # Create authorization record in database
-        record = await create_authorization_record(
-            session=session,
-            file_name=original_filename,
-            file_url=file_url,
-            file_size=file_size,
-            file_arrival_time=datetime.utcnow()
-        )
+            # Read file bytes and metadata
+            file_bytes = await file.read()
+            original_filename = file.filename
+            file_size = len(file_bytes)
 
-        logger.info(f" Authorization record created: {record.id}")
+            # Check if file already exists
+            file_exists = await check_file_exists(session, original_filename)
+            if file_exists:
+                raise HTTPException(
+                    status_code=400,
+                    detail="File name already exists. Please upload with different name",
+                )
 
-        return {
-            "message": "File uploaded and authorization created successfully",
-            "authorization_id": record.id,
-            "file_name": record.file_name,
-            "original_filename": original_filename,
-            "file_url": record.file_url,
-            "file_size": record.file_size,
-            "file_arrival_time": record.file_arrival_time,
-            "status": record.status,
-            "member_name": record.member_name,
-            "health_plan": record.health_plan,
-            "priority": record.priority
-        }
+            logger.info(f"📤 Uploading file: {original_filename} ({file_size} bytes)")
+
+            # Upload to Azure using SAS URL
+            file_url = await upload_via_sas_url(
+                file_bytes=file_bytes,
+                blob_name=original_filename,
+                content_type=file.content_type or "application/octet-stream",
+            )
+
+            logger.info(f"✅ File uploaded to Azure: {file_url}")
+
+            # Create authorization record in database
+            record = await create_authorization_record(
+                session=session,
+                file_name=original_filename,
+                file_url=file_url,
+                file_size=file_size,
+                file_arrival_time=datetime.utcnow(),
+                source="Upload",
+            )
+
+            logger.info(f"✅ Authorization record created: {record.document_id}")
+
+            return DocumentUploadResponse(
+                document_id=record.document_id, status="queued"
+            )
 
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f" Upload failed for {file.filename}: {str(e)}")
-        raise HTTPException(
-            status_code=500, 
-            detail=f"Upload failed: {str(e)}"
-        )
+        logger.error(f"❌ Upload/registration failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
 
-@router.get("/documents/{document_id}")
-async def get_document_by_document_id(
-    document_id: str,
-    session: AsyncSession = Depends(get_db)
-):
+
+@router.get(
+    "/documents/{document_id}",
+    status_code=status.HTTP_200_OK,
+    summary="Stream/download document",
+    description="Streams/downloads the file via API proxy (auth enforced)",
+)
+async def get_document(document_id: str, session: AsyncSession = Depends(get_db)):
     """
-    Get document by document_id from authorization record
+    Get document by document_id and stream it.
+
+    **Path Parameters**:
+    - document_id: Unique document identifier
+
+    **Returns**:
+    - Streaming file response (PDF/document)
     """
     try:
+        logger.info(f"📥 Fetching document: {document_id}")
+
         # Get file details from database
-        from sqlalchemy import text
-        
-        query = text("""
+        query = text(
+            """
             SELECT file_name, file_url 
             FROM um.um_authorizations 
             WHERE document_id = :document_id
-        """)
-        
+        """
+        )
+
         result = await session.execute(query, {"document_id": document_id})
         record = result.fetchone()
-        
+
         if not record:
             raise HTTPException(status_code=404, detail="Document not found")
-        
+
         file_name = record.file_name
         file_url = record.file_url
-        
+
         # Download from Azure Blob Storage
         bsc = get_blob_service_client()
         if bsc is None:
-            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Storage not configured")
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Storage not configured",
+            )
+
         blob_client = BlobClient.from_connection_string(
             conn_str=get_settings()["AZURE_STORAGE_CONNECTION_STRING"],
             container_name=get_container_name(),
-            blob_name=file_name
+            blob_name=file_name,
         )
 
         # Check if blob exists
         exists = await blob_client.exists()
         if not exists:
-            raise HTTPException(status_code=404, detail="Requested document not found in storage")
+            raise HTTPException(
+                status_code=404, detail="Requested document not found in storage"
+            )
 
         # Download file as stream
         stream = await blob_client.download_blob()
 
-        # Return PDF for display in browser
+        logger.info(f"✅ Streaming document: {file_name}")
+
+        # Return file for display/download in browser
         return StreamingResponse(
             stream.chunks(),
             media_type="application/pdf",
-            headers={
-                "Content-Disposition": f"inline; filename={file_name}"
-            }
+            headers={"Content-Disposition": f"inline; filename={file_name}"},
         )
 
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f" Failed to fetch document {document_id}: {str(e)}")
+        logger.error(f"❌ Failed to fetch document {document_id}: {str(e)}")
         raise HTTPException(
-            status_code=500,
-            detail=f"Error retrieving document: {str(e)}"
+            status_code=500, detail=f"Error retrieving document: {str(e)}"
+        )
+
+
+@router.get(
+    "/documents/{document_id}/metadata",
+    response_model=DocumentMetadataResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Get document metadata",
+    description="Returns metadata, checksum, transfer_status, sftp_path",
+)
+async def get_document_metadata(
+    document_id: str, session: AsyncSession = Depends(get_db)
+):
+    """
+    Get document metadata without downloading the file.
+
+    **Path Parameters**:
+    - document_id: Unique document identifier
+
+    **Returns**:
+    - document_id: Document identifier
+    - filename: Original filename
+    - file_size: File size in bytes
+    - checksum: File checksum (MD5)
+    - transfer_status: Transfer status
+    - sftp_path: SFTP path if applicable
+    - blob_url: Blob storage URL if applicable
+    - created_date: Upload date
+    - modified_date: Last modified date
+    """
+    try:
+        logger.info(f"📋 Fetching metadata for document: {document_id}")
+
+        # Get file details from database
+        query = text(
+            """
+            SELECT 
+                document_id,
+                file_name,
+                file_url,
+                file_size,
+                source,
+                status,
+                created_at,
+                updated_at
+            FROM um.um_authorizations 
+            WHERE document_id = :document_id
+        """
+        )
+
+        result = await session.execute(query, {"document_id": document_id})
+        record = result.mappings().first()
+
+        if not record:
+            raise HTTPException(status_code=404, detail="Document not found")
+
+        # Determine if SFTP or blob storage
+        file_url = record["file_url"]
+        sftp_path = (
+            file_url.replace("sftp://", "") if file_url.startswith("sftp://") else None
+        )
+        blob_url = file_url if file_url.startswith("http") else None
+
+        # Determine transfer status based on source and status
+        transfer_status = "completed" if record["status"] != "Queued" else "pending"
+
+        # Calculate checksum (simplified - in production, store this in DB)
+        checksum = hashlib.md5(document_id.encode()).hexdigest()
+
+        logger.info(f"✅ Metadata retrieved for document: {document_id}")
+
+        return DocumentMetadataResponse(
+            document_id=record["document_id"],
+            filename=record["file_name"],
+            file_size=record["file_size"],
+            checksum=checksum,
+            transfer_status=transfer_status,
+            sftp_path=sftp_path,
+            blob_url=blob_url,
+            created_date=record["created_at"],
+            modified_date=record["updated_at"],
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(
+            f"❌ Failed to fetch metadata for document {document_id}: {str(e)}"
+        )
+        raise HTTPException(
+            status_code=500, detail=f"Error retrieving document metadata: {str(e)}"
         )

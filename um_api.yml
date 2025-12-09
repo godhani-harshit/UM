@@ -1,0 +1,3644 @@
+openapi: 3.0.3
+info:
+  title: Utilization Management API
+  description: |
+    Comprehensive API for Curana Health Utilization Management System.
+    
+    ## Workflows Supported:
+    - **Authentication & Authorization**: Azure AD integration, role-based access
+    - **Intake Processing**: Non-clinical staff workflow for initial case processing
+    - **Nurse/Clinical Review**: Clinical staff medical necessity determinations
+    - **Medical Director Review**: Physician-level review for escalated cases
+    - **Appeals & Grievances**: Specialized workflow for appeals and grievances processing
+    
+    ## Key Features:
+    - AI-powered document extraction and analysis
+    - Real-time queue management
+    - Auto-save and draft support
+    - Comprehensive audit trails
+    - Role-based access control
+  version: 1.0.0
+  contact:
+    name: Curana Health API Support
+    email: api-support@curanahealth.com
+  license:
+    name: Proprietary
+    url: https://curanahealth.com/terms
+
+servers:
+  - url: https://api.curanahealth.com/v1
+    description: Production Server
+  - url: https://api-staging.curanahealth.com/v1
+    description: Staging Server
+  - url: http://localhost:4010/v1
+    description: Development Server
+
+tags:
+  - name: Authentication
+    description: User authentication and authorization operations
+  - name: Intake
+    description: Intake processing workflow endpoints
+  - name: Clinical Review
+    description: Nurse/clinical review workflow endpoints
+  - name: Medical Director
+    description: Medical director review workflow endpoints
+  - name: Appeals & Grievances
+    description: Appeals and grievances processing endpoints
+  - name: Queue Management
+    description: Case queue and assignment operations
+  - name: Dashboard
+    description: Dashboard and statistics endpoints
+  - name: Documents
+    description: Document upload and retrieval endpoints
+
+security:
+  - BearerAuth: []
+  - AzureAD: []
+
+paths:
+  # ============================================================================
+  # AUTHENTICATION ENDPOINTS
+  # ============================================================================
+  /auth/login:
+    post:
+      tags:
+        - Authentication
+      summary: User login
+      description: Authenticate user with email only (no password)
+      operationId: loginUser
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - email
+              properties:
+                email:
+                  type: string
+                  format: email
+                  example: "nurse@curanahealth.com"
+                remember_me:
+                  type: boolean
+                  default: false
+      responses:
+        '200':
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  /auth/logout:
+    post:
+      tags:
+        - Authentication
+      summary: User logout
+      description: Invalidate user session and token
+      operationId: logoutUser
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - email
+              properties:
+                email:
+                  type: string
+                  format: email
+                  example: "nurse@curanahealth.com"
+      responses:
+        '200':
+          description: Logout successful
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "Logged out successfully"
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  /auth/refresh:
+    post:
+      tags:
+        - Authentication
+      summary: Refresh access token
+      description: Get new access token using refresh token
+      operationId: refreshToken
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - refresh_token
+              properties:
+                refresh_token:
+                  type: string
+      responses:
+        '200':
+          description: Token refreshed successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  access_token:
+                    type: string
+                  expires_in:
+                    type: integer
+                    example: 3600
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  /auth/me:
+    get:
+      tags:
+        - Authentication
+      summary: Get current user profile
+      description: Retrieve authenticated user's profile and permissions
+      operationId: getCurrentUser
+      responses:
+        '200':
+          description: User profile retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserProfile'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  # ============================================================================
+  # DASHBOARD ENDPOINTS
+  # ============================================================================
+  /dashboard/statistics:
+    get:
+      tags:
+        - Dashboard
+      summary: Get dashboard statistics
+      description: Retrieve overall statistics for the dashboard
+      operationId: getDashboardStats
+      responses:
+        '200':
+          description: Statistics retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DashboardStatistics'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  /dashboard/workflows:
+    get:
+      tags:
+        - Dashboard
+      summary: Get available workflows
+      description: Retrieve workflows available to the authenticated user
+      operationId: getAvailableWorkflows
+      responses:
+        '200':
+          description: Workflows retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  workflows:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/WorkflowAccess'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  # ============================================================================
+  # INTAKE PROCESSING ENDPOINTS
+  # ============================================================================
+  /intake/queue:
+    get:
+      tags:
+        - Intake
+        - Queue Management
+      summary: Get intake queue
+      description: Retrieve list of cases in intake processing queue
+      operationId: getIntakeQueue
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/PageSizeParam'
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [new, in_progress, completed, unable_to_process]
+        - name: priority
+          in: query
+          schema:
+            type: string
+            enum: [expedited, standard]
+        - name: search
+          in: query
+          description: Search by auth number or member name
+          schema:
+            type: string
+        - name: sort_by
+          in: query
+          schema:
+            type: string
+            enum: [received_date, priority, lapse_time]
+            default: received_date
+        - name: sort_order
+          in: query
+          schema:
+            type: string
+            enum: [asc, desc]
+            default: desc
+      responses:
+        '200':
+          description: Intake queue retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IntakeQueueResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+  /intake/cases:
+    post:
+      tags:
+        - Intake
+      summary: Create new intake case from Azure blob
+      description: Create a new intake case from Azure blob storage
+      operationId: createIntakeCase
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - blob_url
+                - auth_number
+              properties:
+                blob_url:
+                  type: string
+                  format: uri
+                  example: "https://storage.azure.com/intake/AUTH123456.pdf"
+                auth_number:
+                  type: string
+                  example: "AUTH123456"
+                priority:
+                  type: string
+                  enum: [expedited, standard]
+                  default: standard
+                metadata:
+                  type: object
+                  additionalProperties: true
+      responses:
+        '201':
+          description: Case created successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  document_id:
+                    type: string
+                  auth_number:
+                    type: string
+                  message:
+                    type: string
+                  extraction_job_id:
+                    type: string
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  /intake/cases/{document_id}:
+    get:
+      tags:
+        - Intake
+      summary: Get intake case details
+      description: Retrieve detailed information for a specific intake case
+      operationId: getIntakeCase
+      parameters:
+        - name: document_id
+          in: path
+          required: true
+          schema:
+            type: string
+          example: "550e8400-e29b-41d4-a716-446655440004"
+      responses:
+        '200':
+          description: Case details retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IntakeCaseDetail'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+    put:
+      tags:
+        - Intake
+      summary: Update intake case
+      description: Update intake case information from AI analysis
+      operationId: updateIntakeCase
+      parameters:
+        - name: document_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IntakeCaseUpdate'
+      responses:
+        '200':
+          description: Case updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IntakeCaseDetail'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /intake/cases/{document_id}/ai-analysis:
+    post:
+      tags:
+        - Intake
+      summary: Run AI analysis on intake document
+      description: Perform AI-powered document analysis on intake case
+      operationId: runIntakeAIAnalysis
+      parameters:
+        - name: document_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                blob:
+                  type: string
+                  description: Blob data for AI analysis
+      responses:
+        '200':
+          description: AI analysis completed successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /intake/cases/{document_id}/submit:
+    post:
+      tags:
+        - Intake
+      summary: Submit intake case for clinical review
+      description: Complete intake processing and submit case for clinical review
+      operationId: submitIntakeCase
+      parameters:
+        - name: document_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IntakeCaseSubmit'
+      responses:
+        '200':
+          description: Case submitted successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "Case submitted for clinical review"
+                  case:
+                    $ref: '#/components/schemas/IntakeCaseDetail'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  /intake/cases/{document_id}/draft:
+    post:
+      tags:
+        - Intake
+      summary: Save intake case as draft
+      description: Auto-save intake case progress
+      operationId: saveIntakeDraft
+      parameters:
+        - name: document_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IntakeCaseSubmit'
+      responses:
+        '200':
+          description: Draft saved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "Draft saved successfully"
+                  saved_at:
+                    type: string
+                    format: date-time
+                  document_id:
+                    type: string
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  # ============================================================================
+  # CLINICAL REVIEW ENDPOINTS
+  # ============================================================================
+  /clinical/queue:
+    get:
+      tags:
+        - Clinical Review
+        - Queue Management
+      summary: Get clinical review queue
+      description: Retrieve list of cases in clinical review queue
+      operationId: getClinicalQueue
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/PageSizeParam'
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [new, in_progress, completed]
+        - name: priority
+          in: query
+          schema:
+            type: string
+            enum: [urgent, expedited, standard]
+        - name: review_type
+          in: query
+          schema:
+            type: string
+            enum: [pre_service, concurrent, retrospective]
+        - name: template
+          in: query
+          schema:
+            type: string
+        - name: search
+          in: query
+          description: Search by auth number or member name
+          schema:
+            type: string
+        - name: sort_by
+          in: query
+          schema:
+            type: string
+            enum: [received_date, priority, lapse_time]
+            default: received_date
+        - name: sort_order
+          in: query
+          schema:
+            type: string
+            enum: [asc, desc]
+            default: desc
+      responses:
+        '200':
+          description: Clinical queue retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClinicalQueueResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+  /clinical/cases/{auth_number}:
+    get:
+      tags:
+        - Clinical Review
+      summary: Get clinical case details
+      description: Retrieve detailed information about a clinical review case
+      operationId: getClinicalCase
+      parameters:
+        - name: auth_number
+          in: path
+          required: true
+          schema:
+            type: string
+          example: "AUTH123456"
+      responses:
+        '200':
+          description: Case retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClinicalCaseDetails'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /clinical/cases/{auth_number}/draft:
+    post:
+      tags:
+        - Clinical Review
+      summary: Save draft of clinical case
+      description: Save work in progress for a clinical case
+      operationId: saveClinicalDraft
+      parameters:
+        - name: auth_number
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ClinicalCaseSubmission'
+      responses:
+        '200':
+          description: Draft saved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  auth_number:
+                    type: string
+                  saved_at:
+                    type: string
+                    format: date-time
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /clinical/cases/{auth_number}/submit:
+    post:
+      tags:
+        - Clinical Review
+      summary: Submit clinical case determination
+      description: Submit final determination for a clinical case
+      operationId: submitClinicalCase
+      parameters:
+        - name: auth_number
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ClinicalCaseSubmission'
+      responses:
+        '200':
+          description: Case submitted successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  auth_number:
+                    type: string
+                  determination:
+                    type: string
+                  submitted_at:
+                    type: string
+                    format: date-time
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  # ============================================================================
+  # MEDICAL DIRECTOR REVIEW ENDPOINTS
+  # ============================================================================
+  /medical-director/queue:
+    get:
+      tags:
+        - Medical Director
+        - Queue Management
+      summary: Get medical director queue
+      description: Retrieve list of cases escalated for medical director review
+      operationId: getMedicalDirectorQueue
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/PageSizeParam'
+        - name: escalation_type
+          in: query
+          schema:
+            type: string
+            enum: [nurse_review, appeal, complex_case, second_opinion]
+          description: Type of escalation
+        - name: priority
+          in: query
+          schema:
+            type: string
+            enum: [urgent, expedited, standard]
+        - name: complexity
+          in: query
+          schema:
+            type: string
+            enum: [high, medium, standard]
+        - name: original_reviewer
+          in: query
+          schema:
+            type: string
+          description: Name of original nurse reviewer
+        - name: template
+          in: query
+          schema:
+            type: string
+        - name: search
+          in: query
+          description: Search by auth number or member name
+          schema:
+            type: string
+        - name: sort_by
+          in: query
+          schema:
+            type: string
+            enum: [escalation_date, priority, lapse_time]
+            default: escalation_date
+        - name: sort_order
+          in: query
+          schema:
+            type: string
+            enum: [asc, desc]
+            default: desc
+      responses:
+        '200':
+          description: Medical director queue retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MedicalDirectorQueueResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+  /medical-director/cases/{auth_number}:
+    get:
+      tags:
+        - Medical Director
+      summary: Get medical director case details
+      description: Retrieve detailed information about a medical director review case
+      operationId: getMedicalDirectorCase
+      parameters:
+        - name: auth_number
+          in: path
+          required: true
+          schema:
+            type: string
+          example: "AUTH123456"
+      responses:
+        '200':
+          description: Case retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  auth_number:
+                    type: string
+                    example: "AUTH123456"
+                  member_name:
+                    type: string
+                    example: "John Doe"
+                  dob:
+                    type: string
+                    example: "01/15/1965"
+                  priority:
+                    type: string
+                    enum: [urgent, expedited, standard]
+                    example: "standard"
+                  template:
+                    type: string
+                    example: "IP Hospital (REV 0110)"
+                  nurse_reviewer:
+                    type: string
+                    example: "Sarah Johnson, RN"
+                  escalation_date:
+                    type: string
+                    format: date-time
+                    example: "2025-08-21T14:30:00Z"
+                  nurse_review_note:
+                    type: string
+                    description: Pre-populated nurse review summary (read-only)
+                    example: "Patient ID: 12345, Review Type: Pre-Service, Priority: Standard..."
+                  clinical_document_url:
+                    type: string
+                    format: uri
+                    description: URL to the clinical PDF document
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /medical-director/cases/{auth_number}/draft:
+    post:
+      tags:
+        - Medical Director
+      summary: Save draft of medical director review
+      description: Save work in progress for a medical director review case
+      operationId: saveMedicalDirectorDraft
+      parameters:
+        - name: auth_number
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - auth_number
+                - md_note
+                - md_determination
+              properties:
+                auth_number:
+                  type: string
+                md_note:
+                  type: string
+                  description: Medical Director's clinical assessment and rationale
+                md_determination:
+                  type: string
+                  enum: [Approved, "Partially Approved", Denied]
+                denial_rationale:
+                  type: string
+                  description: Simple language rationale for denial or partial approval (for member letters)
+                additional_notes:
+                  type: string
+                  description: Additional clinical notes or administrative comments
+      responses:
+        '200':
+          description: Draft saved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  auth_number:
+                    type: string
+                  saved_at:
+                    type: string
+                    format: date-time
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /medical-director/cases/{auth_number}/submit:
+    post:
+      tags:
+        - Medical Director
+      summary: Submit medical director determination
+      description: Submit final physician-level determination for a case
+      operationId: submitMedicalDirectorCase
+      parameters:
+        - name: auth_number
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - auth_number
+                - md_note
+                - md_determination
+              properties:
+                auth_number:
+                  type: string
+                md_note:
+                  type: string
+                  description: Medical Director's clinical assessment and rationale
+                md_determination:
+                  type: string
+                  enum: [Approved, "Partially Approved", Denied]
+                denial_rationale:
+                  type: string
+                  description: Simple language rationale for denial or partial approval (for member letters)
+                additional_notes:
+                  type: string
+                  description: Additional clinical notes or administrative comments
+      responses:
+        '200':
+          description: Medical director determination submitted successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  auth_number:
+                    type: string
+                  determination:
+                    type: string
+                  submitted_at:
+                    type: string
+                    format: date-time
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  # ============================================================================
+  # APPEALS & GRIEVANCES ENDPOINTS
+  # ============================================================================
+  /appeals-grievances/queue:
+    get:
+      tags:
+        - Appeals & Grievances
+        - Queue Management
+      summary: Get appeals and grievances queue
+      description: Retrieve list of appeals and grievances cases
+      operationId: getAppealsGrievancesQueue
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/PageSizeParam'
+        - name: case_type
+          in: query
+          schema:
+            type: string
+            enum: [appeal, grievance]
+          description: Filter by case type
+        - name: priority
+          in: query
+          schema:
+            type: string
+            enum: [urgent, expedited, standard]
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [received, under_review, pending_info, completed]
+        - name: category
+          in: query
+          schema:
+            type: string
+            enum: [quality_of_care, access_to_care, customer_service, billing_claims, coverage_benefits, provider_network]
+        - name: requestor
+          in: query
+          schema:
+            type: string
+            enum: [member, provider, member_representative]
+        - name: received_date
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: search
+          in: query
+          description: Search by case ID or member name
+          schema:
+            type: string
+        - name: sort_by
+          in: query
+          schema:
+            type: string
+            enum: [received_date, priority, lapse_time]
+            default: received_date
+        - name: sort_order
+          in: query
+          schema:
+            type: string
+            enum: [asc, desc]
+            default: desc
+      responses:
+        '200':
+          description: Appeals and grievances queue retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AppealsGrievancesQueueResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+  /appeals-grievances/cases:
+    post:
+      tags:
+        - Appeals & Grievances
+      summary: Create new appeal or grievance case
+      description: Create a new appeals or grievances case based on intake form
+      operationId: createAppealsGrievancesCase
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - member_name
+                - dob
+                - healthplan_id
+                - health_plan
+                - case_type
+              properties:
+                member_name:
+                  type: string
+                  example: "John Doe"
+                dob:
+                  type: string
+                  example: "01/15/1980"
+                healthplan_id:
+                  type: string
+                  example: "HP123456"
+                health_plan:
+                  type: string
+                  example: "Blue Cross"
+                case_type:
+                  type: string
+                  enum: [appeal, grievance]
+                requestor:
+                  type: object
+                  properties:
+                    relationship:
+                      type: string
+                      enum: [in-network-provider, out-of-network-provider, member, member-representative]
+                    npi:
+                      type: string
+                    name:
+                      type: string
+                    street_address:
+                      type: string
+                    city:
+                      type: string
+                    state:
+                      type: string
+                    zip_code:
+                      type: string
+                    phone:
+                      type: string
+                    fax:
+                      type: string
+                    email:
+                      type: string
+                      format: email
+                request_details:
+                  type: object
+                  required:
+                    - receipt_datetime
+                    - priority
+                    - case_category
+                  properties:
+                    receipt_datetime:
+                      type: string
+                      format: date-time
+                      description: Receipt date time in CST
+                    priority:
+                      type: string
+                      enum: [expedited, standard]
+                    case_category:
+                      type: string
+                      enum: [dmr-appeal, member-post-service, member-pre-service, out-of-network-provider, in-network-provider-level-i, in-network-provider-level-ii, qio-appeal, ctm, grievance]
+                    date_of_service:
+                      type: string
+                      format: date
+                      description: Required for appeals only
+                    claim_number:
+                      type: string
+                    authorization_number:
+                      type: string
+                    waiver_of_liability:
+                      type: string
+                      enum: [present, not-present]
+                processing:
+                  type: object
+                  properties:
+                    processing_result:
+                      type: string
+                      enum: [processed, status-update-request, unable-to-process]
+                    unable_to_process_reason:
+                      type: string
+                    sent_to_um:
+                      type: boolean
+      responses:
+        '201':
+          description: Case created successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  case_id:
+                    type: string
+                  message:
+                    type: string
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  /appeals-grievances/cases/{case_id}:
+    get:
+      tags:
+        - Appeals & Grievances
+      summary: Get appeal or grievance case details
+      description: Retrieve detailed information about an appeals or grievances case
+      operationId: getAppealsGrievancesCase
+      parameters:
+        - name: case_id
+          in: path
+          required: true
+          schema:
+            type: string
+          example: "AG-2024-1234"
+      responses:
+        '200':
+          description: Case retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AppealsGrievancesCaseDetails'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+    patch:
+      tags:
+        - Appeals & Grievances
+      summary: Update appeal or grievance case
+      description: Update appeals or grievances case information
+      operationId: updateAppealsGrievancesCase
+      parameters:
+        - name: case_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AppealsGrievancesCaseUpdate'
+      responses:
+        '200':
+          description: Case updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AppealsGrievancesCaseDetails'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  # ============================================================================
+  # DOCUMENT MANAGEMENT ENDPOINTS
+  # ============================================================================
+  /documents/upload:
+    post:
+      tags:
+        - Documents
+      summary: Upload document
+      description: Upload a document and associate it with a case
+      operationId: uploadDocument
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+                - file
+                - auth_number
+              properties:
+                file:
+                  type: string
+                  format: binary
+                auth_number:
+                  type: string
+                document_type:
+                  type: string
+                  enum: [clinical_notes, lab_results, imaging, prescription, other]
+      responses:
+        '201':
+          description: Document uploaded successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  document_id:
+                    type: string
+                  blob_url:
+                    type: string
+                  message:
+                    type: string
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  /documents/{document_id}:
+    get:
+      tags:
+        - Documents
+      summary: Get document
+      description: Retrieve a specific document
+      operationId: getDocument
+      parameters:
+        - name: document_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Document retrieved successfully
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /documents/cases/{auth_number}:
+    get:
+      tags:
+        - Documents
+      summary: Get case documents
+      description: Retrieve all documents associated with a case
+      operationId: getCaseDocuments
+      parameters:
+        - name: auth_number
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Documents retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  auth_number:
+                    type: string
+                  documents:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/DocumentInfo'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+# ==============================================================================
+# COMPONENTS
+# ==============================================================================
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+    AzureAD:
+      type: oauth2
+      flows:
+        authorizationCode:
+          authorizationUrl: https://login.microsoftonline.com/common/oauth2/v2.0/authorize
+          tokenUrl: https://login.microsoftonline.com/common/oauth2/v2.0/token
+          scopes:
+            api.read: Read access to API
+            api.write: Write access to API
+
+  parameters:
+    PageParam:
+      name: page
+      in: query
+      description: Page number for pagination
+      schema:
+        type: integer
+        minimum: 1
+        default: 1
+    
+    PageSizeParam:
+      name: page_size
+      in: query
+      description: Number of items per page
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 10
+
+  schemas:
+    # ==========================================================================
+    # AUTHENTICATION SCHEMAS
+    # ==========================================================================
+    LoginResponse:
+      type: object
+      properties:
+        access_token:
+          type: string
+          example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+        refresh_token:
+          type: string
+        token_type:
+          type: string
+          example: "Bearer"
+        expires_in:
+          type: integer
+          example: 3600
+        user:
+          $ref: '#/components/schemas/UserProfile'
+
+    UserProfile:
+      type: object
+      properties:
+        user_id:
+          type: string
+        email:
+          type: string
+          format: email
+        name:
+          type: string
+        role:
+          type: string
+          enum: [intake_specialist, nurse_reviewer, medical_director, appeals_specialist, admin]
+        permissions:
+          type: array
+          items:
+            type: string
+        workflows:
+          type: array
+          items:
+            type: string
+            enum: [intake, clinical_review, medical_director, appeals_grievances]
+
+    # ==========================================================================
+    # DASHBOARD SCHEMAS
+    # ==========================================================================
+    DashboardStatistics:
+      type: object
+      properties:
+        total_cases:
+          type: integer
+        pending_cases:
+          type: integer
+        completed_today:
+          type: integer
+        overdue_cases:
+          type: integer
+        urgent_cases:
+          type: integer
+        workflow_statistics:
+          type: object
+          properties:
+            intake:
+              $ref: '#/components/schemas/WorkflowStats'
+            clinical_review:
+              $ref: '#/components/schemas/WorkflowStats'
+            medical_director:
+              $ref: '#/components/schemas/WorkflowStats'
+            appeals_grievances:
+              $ref: '#/components/schemas/WorkflowStats'
+
+    WorkflowStats:
+      type: object
+      properties:
+        total:
+          type: integer
+        new:
+          type: integer
+        in_progress:
+          type: integer
+        completed:
+          type: integer
+        urgent:
+          type: integer
+
+    WorkflowAccess:
+      type: object
+      properties:
+        workflow_id:
+          type: string
+          enum: [intake, clinical_review, medical_director, appeals_grievances]
+        workflow_name:
+          type: string
+        description:
+          type: string
+        access_level:
+          type: string
+          enum: [read, write, admin]
+        queue_url:
+          type: string
+
+    # ==========================================================================
+    # INTAKE SCHEMAS
+    # ==========================================================================
+    IntakeQueueResponse:
+      type: object
+      properties:
+        cases:
+          type: array
+          items:
+            $ref: '#/components/schemas/IntakeQueueItem'
+        pagination:
+          $ref: '#/components/schemas/PaginationInfo'
+
+    IntakeQueueItem:
+      type: object
+      properties:
+        document_id:
+          type: string
+        auth_number:
+          type: string
+        member_name:
+          type: string
+        dob:
+          type: string
+          format: date
+        received_date:
+          type: string
+          format: date-time
+        priority:
+          type: string
+          enum: [expedited, standard]
+        lapse_time:
+          type: string
+          example: "2 days 3 hours"
+        status:
+          type: string
+          enum: [new, in_progress, completed, unable_to_process]
+        assigned_to:
+          type: string
+
+    IntakeCaseDetail:
+      type: object
+      properties:
+        auth_number:
+          type: string
+        member_info:
+          $ref: '#/components/schemas/MemberInfo'
+        request_provider_info:
+          $ref: '#/components/schemas/RequestProviderInfo'
+        service_provider_info:
+          $ref: '#/components/schemas/ServiceProviderInfo'
+        request_info:
+          $ref: '#/components/schemas/RequestInfo'
+        requested_items:
+          type: array
+          items:
+            $ref: '#/components/schemas/RequestedItem'
+        diagnosis_codes:
+          type: array
+          items:
+            $ref: '#/components/schemas/DiagnosisCode'
+        ai_extractions:
+          $ref: '#/components/schemas/AIExtractions'
+        processing_status:
+          $ref: '#/components/schemas/ProcessingStatus'
+        documents:
+          type: array
+          items:
+            $ref: '#/components/schemas/DocumentInfo'
+
+    IntakeCaseUpdate:
+      type: object
+      properties:
+        source:
+          type: string
+          example: "Fax"
+        health_plan:
+          type: string
+          example: "Plan A"
+        template:
+          type: string
+          example: "IP Hospital (REV 0110)"
+        auth_number:
+          type: string
+          example: "AUTH-2024-1234"
+        member_name:
+          type: string
+          example: ""
+        received_date:
+          type: string
+          format: date-time
+          example: "2025-10-21T17:40:24.455Z"
+        priority:
+          type: string
+          enum: [expedited, standard]
+          example: "expedited"
+        status:
+          type: string
+          enum: [new, in_progress, completed, unable_to_process]
+          example: "new"
+        lapse_time:
+          type: string
+          example: "2 hours"
+        document_id:
+          type: string
+          example: "550e8400-e29b-41d4-a716-446655440004"
+        assigned_user:
+          type: string
+          example: "John Doe"
+        member_info:
+          $ref: '#/components/schemas/MemberInfo'
+        request_provider_info:
+          $ref: '#/components/schemas/RequestProviderInfo'
+        service_provider_info:
+          $ref: '#/components/schemas/ServiceProviderInfo'
+        request_info:
+          $ref: '#/components/schemas/RequestInfo'
+        requested_items:
+          type: array
+          items:
+            $ref: '#/components/schemas/RequestedItem'
+        diagnosis_codes:
+          type: array
+          items:
+            $ref: '#/components/schemas/DiagnosisCode'
+
+    IntakeCaseSubmit:
+      type: object
+      properties:
+        auth_number:
+          type: string
+        member_info:
+          $ref: '#/components/schemas/MemberInfo'
+        request_provider_info:
+          $ref: '#/components/schemas/RequestProviderInfo'
+        service_provider_info:
+          $ref: '#/components/schemas/ServiceProviderInfo'
+        request_info:
+          $ref: '#/components/schemas/RequestInfo'
+        requested_items:
+          type: array
+          items:
+            $ref: '#/components/schemas/RequestedItem'
+        diagnosis_codes:
+          type: array
+          items:
+            $ref: '#/components/schemas/DiagnosisCode'
+
+    RequestProviderInfo:
+      type: object
+      properties:
+        requesting_provider:
+          type: string
+          example: ""
+        requesting_provider_npi:
+          type: string
+          example: ""
+        requesting_phone:
+          type: string
+          example: ""
+        requesting_fax:
+          type: string
+          example: ""
+        requesting_email:
+          type: string
+          example: ""
+
+    ServiceProviderInfo:
+      type: object
+      properties:
+        servicing_provider:
+          type: string
+          example: "string"
+        servicing_provider_npi:
+          type: string
+          example: "string"
+        servicing_phone:
+          type: string
+          example: "string"
+        servicing_fax:
+          type: string
+          example: "string"
+        servicing_email:
+          type: string
+          example: "string"
+
+    RequestInfo:
+      type: object
+      properties:
+        template_type:
+          type: string
+          example: "string"
+        received_datetime:
+          type: string
+          format: date-time
+          example: "2025-10-22T08:47:21.885Z"
+        start_of_service:
+          type: string
+          format: date-time
+          example: "2025-10-22T08:47:21.885Z"
+        priority:
+          type: string
+          enum: [expedited, standard]
+          example: "expedited"
+
+    RequestedItem:
+      type: object
+      properties:
+        cpt_rev:
+          type: string
+          example: "99214"
+        dosage:
+          type: string
+          example: "10"
+        units:
+          type: string
+          example: "mg"
+        frequency:
+          type: string
+          example: "Daily"
+        duration:
+          type: string
+          example: "30 days"
+
+    DiagnosisCode:
+      type: object
+      properties:
+        code:
+          type: string
+          example: "J45.909"
+        description:
+          type: string
+          example: "Unspecified asthma, uncomplicated"
+
+    AIExtractions:
+      type: object
+      properties:
+        member_info:
+          type: object
+          properties:
+            member_name:
+              type: object
+              properties:
+                value:
+                  type: string
+                  example: "John Doe"
+                ai_score:
+                  type: number
+                  minimum: 0
+                  maximum: 100
+                  example: 95
+            dob:
+              type: object
+              properties:
+                value:
+                  type: string
+                  example: "1980-01-15"
+                ai_score:
+                  type: number
+                  minimum: 0
+                  maximum: 100
+                  example: 90
+            health_plan_id:
+              type: object
+              properties:
+                value:
+                  type: string
+                  example: "HP123456"
+                ai_score:
+                  type: number
+                  minimum: 0
+                  maximum: 100
+                  example: 90
+            health_plan:
+              type: object
+              properties:
+                value:
+                  type: string
+                  example: "Blue Cross"
+                ai_score:
+                  type: number
+                  minimum: 0
+                  maximum: 100
+                  example: 90
+            authorization_number:
+              type: object
+              properties:
+                value:
+                  type: string
+                  example: "AUTH-2024-1234"
+                ai_score:
+                  type: number
+                  minimum: 0
+                  maximum: 100
+                  example: 90
+        request_provider_info:
+          type: object
+          properties:
+            requesting_provider:
+              type: object
+              properties:
+                value:
+                  type: string
+                ai_score:
+                  type: number
+                  minimum: 0
+                  maximum: 100
+            requesting_provider_npi:
+              type: object
+              properties:
+                value:
+                  type: string
+                ai_score:
+                  type: number
+                  minimum: 0
+                  maximum: 100
+            requesting_phone:
+              type: object
+              properties:
+                value:
+                  type: string
+                ai_score:
+                  type: number
+                  minimum: 0
+                  maximum: 100
+            requesting_fax:
+              type: object
+              properties:
+                value:
+                  type: string
+                ai_score:
+                  type: number
+                  minimum: 0
+                  maximum: 100
+            requesting_email:
+              type: object
+              properties:
+                value:
+                  type: string
+                ai_score:
+                  type: number
+                  minimum: 0
+                  maximum: 100
+        service_provider_info:
+          type: object
+          properties:
+            servicing_provider:
+              type: object
+              properties:
+                value:
+                  type: string
+                ai_score:
+                  type: number
+                  minimum: 0
+                  maximum: 100
+            servicing_provider_npi:
+              type: object
+              properties:
+                value:
+                  type: string
+                ai_score:
+                  type: number
+                  minimum: 0
+                  maximum: 100
+            servicing_phone:
+              type: object
+              properties:
+                value:
+                  type: string
+                ai_score:
+                  type: number
+                  minimum: 0
+                  maximum: 100
+            servicing_fax:
+              type: object
+              properties:
+                value:
+                  type: string
+                ai_score:
+                  type: number
+                  minimum: 0
+                  maximum: 100
+            servicing_email:
+              type: object
+              properties:
+                value:
+                  type: string
+                ai_score:
+                  type: number
+                  minimum: 0
+                  maximum: 100
+        request_info:
+          type: object
+          properties:
+            template_type:
+              type: object
+              properties:
+                value:
+                  type: string
+                ai_score:
+                  type: number
+                  minimum: 0
+                  maximum: 100
+            received_datetime:
+              type: object
+              properties:
+                value:
+                  type: string
+                  format: date-time
+                ai_score:
+                  type: number
+                  minimum: 0
+                  maximum: 100
+            start_of_service:
+              type: object
+              properties:
+                value:
+                  type: string
+                  format: date-time
+                ai_score:
+                  type: number
+                  minimum: 0
+                  maximum: 100
+            priority:
+              type: object
+              properties:
+                value:
+                  type: string
+                  enum: [expedited, standard]
+                ai_score:
+                  type: number
+                  minimum: 0
+                  maximum: 100
+        requested_items:
+          type: array
+          items:
+            type: object
+            properties:
+              cpt_rev:
+                type: object
+                properties:
+                  value:
+                    type: string
+                  ai_score:
+                    type: number
+                    minimum: 0
+                    maximum: 100
+              dosage:
+                type: object
+                properties:
+                  value:
+                    type: string
+                  ai_score:
+                    type: number
+                    minimum: 0
+                    maximum: 100
+              units:
+                type: object
+                properties:
+                  value:
+                    type: string
+                  ai_score:
+                    type: number
+                    minimum: 0
+                    maximum: 100
+              frequency:
+                type: object
+                properties:
+                  value:
+                    type: string
+                  ai_score:
+                    type: number
+                    minimum: 0
+                    maximum: 100
+              duration:
+                type: object
+                properties:
+                  value:
+                    type: string
+                  ai_score:
+                    type: number
+                    minimum: 0
+                    maximum: 100
+        diagnosis_codes:
+          type: array
+          items:
+            type: object
+            properties:
+              code:
+                type: object
+                properties:
+                  value:
+                    type: string
+                  ai_score:
+                    type: number
+                    minimum: 0
+                    maximum: 100
+              description:
+                type: object
+                properties:
+                  value:
+                    type: string
+                  ai_score:
+                    type: number
+                    minimum: 0
+                    maximum: 100
+
+    ProcessingStatus:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [new, in_progress, completed, unable_to_process]
+          example: "new"
+        processing_result:
+          type: string
+          enum: [processed, unable_to_process]
+          example: "processed"
+        unable_to_process_reason:
+          type: string
+          example: "string"
+        assigned_user:
+          type: string
+          example: "string"
+        created_at:
+          type: string
+          format: date-time
+          example: "2025-10-22T08:47:21.885Z"
+        updated_at:
+          type: string
+          format: date-time
+          example: "2025-10-22T08:47:21.885Z"
+
+    # ==========================================================================
+    # CLINICAL REVIEW SCHEMAS
+    # ==========================================================================
+    ClinicalQueueResponse:
+      type: object
+      properties:
+        cases:
+          type: array
+          items:
+            $ref: '#/components/schemas/ClinicalQueueItem'
+        pagination:
+          $ref: '#/components/schemas/PaginationInfo'
+
+    ClinicalQueueItem:
+      type: object
+      properties:
+        auth_number:
+          type: string
+        health_plan_id:
+          type: string
+        member_name:
+          type: string
+        received_date:
+          type: string
+          format: date-time
+        start_of_service:
+          type: string
+          format: date
+        procedure_codes:
+          type: string
+        servicing_provider:
+          type: string
+        npi:
+          type: string
+        status:
+          type: string
+          enum: [new, in_progress, reviewed, pending_md]
+        priority:
+          type: string
+          enum: [expedited, standard, urgent]
+        lapse_time:
+          type: string
+        lapse_hours:
+          type: integer
+        assigned_user:
+          type: string
+          nullable: true
+        result:
+          type: string
+          enum: [pending, approved, denied, sent_to_md]
+        health_plan:
+          type: string
+        template:
+          type: string
+
+    ClinicalCaseDetails:
+      type: object
+      properties:
+        auth_number:
+          type: string
+        member_info:
+          type: object
+          properties:
+            member_name:
+              type: string
+              example: "John Doe"
+            dob:
+              type: string
+              example: "1980-01-15"
+            health_plan_id:
+              type: string
+              example: "HP123456"
+            health_plan:
+              type: string
+              example: "Blue Cross"
+            authorization_number:
+              type: string
+              example: "AUTH-2024-1234"
+        contact_info:
+          type: object
+          properties:
+            request_method:
+              type: string
+              example: "Phone"
+            contact_name:
+              type: string
+            contact_phone:
+              type: string
+            contact_facility:
+              type: string
+            contact_fax:
+              type: string
+            contact_email:
+              type: string
+        clinical_info:
+          type: object
+          properties:
+            template:
+              type: string
+            review_type:
+              type: string
+              enum: [pre_service, concurrent, retrospective]
+              example: "pre_service"
+            priority:
+              type: string
+              enum: [urgent, expedited, standard]
+              example: "standard"
+            brief_clinical_course:
+              type: string
+            past_medical_history:
+              type: string
+            skilled_needs:
+              type: string
+            radiology_diagnostics:
+              type: string
+            ventilator:
+              type: string
+            speech_therapy:
+              type: string
+            last_therapy_certification:
+              type: string
+            discharge_plan_barriers:
+              type: string
+            assessment_plan:
+              type: string
+            concurrent_updates:
+              type: string
+            additional_notes:
+              type: string
+            readmission:
+              type: string
+            criteria:
+              type: string
+            medications:
+              type: array
+              items:
+                type: object
+                properties:
+                  medications_iv_fluids:
+                    type: string
+                  cpt_hcps:
+                    type: string
+                  dose_requested:
+                    type: number
+                  frequency:
+                    type: number
+                  frequency_type:
+                    type: string
+                    enum: [days, weeks, months]
+                  frequency_duration:
+                    type: number
+                  description_dose:
+                    type: number
+                  total_units:
+                    type: number
+                  unit_type:
+                    type: string
+            wounds:
+              type: array
+              items:
+                type: object
+                properties:
+                  duration:
+                    type: string
+                  length:
+                    type: number
+                  width:
+                    type: number
+                  depth:
+                    type: number
+                  location:
+                    type: string
+                  description:
+                    type: string
+                  exudate:
+                    type: string
+                  progress:
+                    type: string
+                  treatment_plan:
+                    type: string
+                  additional_notes:
+                    type: string
+            physical_therapy:
+              type: array
+              items:
+                type: object
+                properties:
+                  review_number:
+                    type: integer
+                  date:
+                    type: string
+                    format: date
+                  bed_mobility:
+                    type: string
+                  transfers:
+                    type: string
+                  ambulation:
+                    type: string
+                  ambulation_distance:
+                    type: string
+                  level_of_func_ambulation:
+                    type: string
+                  assistive_device:
+                    type: string
+                  level_of_func_stairs:
+                    type: string
+                  bathing:
+                    type: string
+                  dressing_upper_body:
+                    type: string
+                  dressing_lower_body:
+                    type: string
+                  toileting:
+                    type: string
+                  toilet_transfers:
+                    type: string
+                  additional_notes:
+                    type: string
+        ai_extractions:
+          type: object
+          description: AI-extracted fields with confidence scores
+          properties:
+            member_info:
+              type: object
+              properties:
+                member_name:
+                  type: object
+                  properties:
+                    value:
+                      type: string
+                      example: "John Doe"
+                    ai_score:
+                      type: number
+                      minimum: 0
+                      maximum: 100
+                      example: 95
+                dob:
+                  type: object
+                  properties:
+                    value:
+                      type: string
+                      example: "1980-01-15"
+                    ai_score:
+                      type: number
+                      minimum: 0
+                      maximum: 100
+                      example: 90
+                health_plan_id:
+                  type: object
+                  properties:
+                    value:
+                      type: string
+                      example: "HP123456"
+                    ai_score:
+                      type: number
+                      minimum: 0
+                      maximum: 100
+                      example: 90
+                health_plan:
+                  type: object
+                  properties:
+                    value:
+                      type: string
+                      example: "Blue Cross"
+                    ai_score:
+                      type: number
+                      minimum: 0
+                      maximum: 100
+                      example: 90
+                authorization_number:
+                  type: object
+                  properties:
+                    value:
+                      type: string
+                      example: "AUTH-2024-1234"
+                    ai_score:
+                      type: number
+                      minimum: 0
+                      maximum: 100
+                      example: 90
+            contact_info:
+              type: object
+              properties:
+                request_method:
+                  type: object
+                  properties:
+                    value:
+                      type: string
+                      example: "Phone"
+                    ai_score:
+                      type: number
+                      minimum: 0
+                      maximum: 100
+                      example: 85
+                contact_name:
+                  type: object
+                  properties:
+                    value:
+                      type: string
+                    ai_score:
+                      type: number
+                      minimum: 0
+                      maximum: 100
+                contact_phone:
+                  type: object
+                  properties:
+                    value:
+                      type: string
+                    ai_score:
+                      type: number
+                      minimum: 0
+                      maximum: 100
+                contact_facility:
+                  type: object
+                  properties:
+                    value:
+                      type: string
+                    ai_score:
+                      type: number
+                      minimum: 0
+                      maximum: 100
+                contact_fax:
+                  type: object
+                  properties:
+                    value:
+                      type: string
+                    ai_score:
+                      type: number
+                      minimum: 0
+                      maximum: 100
+                contact_email:
+                  type: object
+                  properties:
+                    value:
+                      type: string
+                    ai_score:
+                      type: number
+                      minimum: 0
+                      maximum: 100
+            clinical_info:
+              type: object
+              properties:
+                template:
+                  type: object
+                  properties:
+                    value:
+                      type: string
+                    ai_score:
+                      type: number
+                      minimum: 0
+                      maximum: 100
+                review_type:
+                  type: object
+                  properties:
+                    value:
+                      type: string
+                      enum: [pre_service, concurrent, retrospective]
+                    ai_score:
+                      type: number
+                      minimum: 0
+                      maximum: 100
+                priority:
+                  type: object
+                  properties:
+                    value:
+                      type: string
+                      enum: [urgent, expedited, standard]
+                    ai_score:
+                      type: number
+                      minimum: 0
+                      maximum: 100
+                brief_clinical_course:
+                  type: object
+                  properties:
+                    value:
+                      type: string
+                    ai_score:
+                      type: number
+                      minimum: 0
+                      maximum: 100
+                past_medical_history:
+                  type: object
+                  properties:
+                    value:
+                      type: string
+                    ai_score:
+                      type: number
+                      minimum: 0
+                      maximum: 100
+                skilled_needs:
+                  type: object
+                  properties:
+                    value:
+                      type: string
+                    ai_score:
+                      type: number
+                      minimum: 0
+                      maximum: 100
+                radiology_diagnostics:
+                  type: object
+                  properties:
+                    value:
+                      type: string
+                    ai_score:
+                      type: number
+                      minimum: 0
+                      maximum: 100
+                ventilator:
+                  type: object
+                  properties:
+                    value:
+                      type: string
+                    ai_score:
+                      type: number
+                      minimum: 0
+                      maximum: 100
+                speech_therapy:
+                  type: object
+                  properties:
+                    value:
+                      type: string
+                    ai_score:
+                      type: number
+                      minimum: 0
+                      maximum: 100
+                last_therapy_certification:
+                  type: object
+                  properties:
+                    value:
+                      type: string
+                    ai_score:
+                      type: number
+                      minimum: 0
+                      maximum: 100
+                discharge_plan_barriers:
+                  type: object
+                  properties:
+                    value:
+                      type: string
+                    ai_score:
+                      type: number
+                      minimum: 0
+                      maximum: 100
+                assessment_plan:
+                  type: object
+                  properties:
+                    value:
+                      type: string
+                    ai_score:
+                      type: number
+                      minimum: 0
+                      maximum: 100
+                concurrent_updates:
+                  type: object
+                  properties:
+                    value:
+                      type: string
+                    ai_score:
+                      type: number
+                      minimum: 0
+                      maximum: 100
+                additional_notes:
+                  type: object
+                  properties:
+                    value:
+                      type: string
+                    ai_score:
+                      type: number
+                      minimum: 0
+                      maximum: 100
+                readmission:
+                  type: object
+                  properties:
+                    value:
+                      type: string
+                    ai_score:
+                      type: number
+                      minimum: 0
+                      maximum: 100
+                criteria:
+                  type: object
+                  properties:
+                    value:
+                      type: string
+                    ai_score:
+                      type: number
+                      minimum: 0
+                      maximum: 100
+                medications:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      medications_iv_fluids:
+                        type: object
+                        properties:
+                          value:
+                            type: string
+                          ai_score:
+                            type: number
+                            minimum: 0
+                            maximum: 100
+                      cpt_hcps:
+                        type: object
+                        properties:
+                          value:
+                            type: string
+                          ai_score:
+                            type: number
+                            minimum: 0
+                            maximum: 100
+                      dose_requested:
+                        type: object
+                        properties:
+                          value:
+                            type: number
+                          ai_score:
+                            type: number
+                            minimum: 0
+                            maximum: 100
+                      frequency:
+                        type: object
+                        properties:
+                          value:
+                            type: number
+                          ai_score:
+                            type: number
+                            minimum: 0
+                            maximum: 100
+                      frequency_type:
+                        type: object
+                        properties:
+                          value:
+                            type: string
+                            enum: [days, weeks, months]
+                          ai_score:
+                            type: number
+                            minimum: 0
+                            maximum: 100
+                      frequency_duration:
+                        type: object
+                        properties:
+                          value:
+                            type: number
+                          ai_score:
+                            type: number
+                            minimum: 0
+                            maximum: 100
+                      description_dose:
+                        type: object
+                        properties:
+                          value:
+                            type: number
+                          ai_score:
+                            type: number
+                            minimum: 0
+                            maximum: 100
+                      total_units:
+                        type: object
+                        properties:
+                          value:
+                            type: number
+                          ai_score:
+                            type: number
+                            minimum: 0
+                            maximum: 100
+                      unit_type:
+                        type: object
+                        properties:
+                          value:
+                            type: string
+                          ai_score:
+                            type: number
+                            minimum: 0
+                            maximum: 100
+                wounds:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      duration:
+                        type: object
+                        properties:
+                          value:
+                            type: string
+                          ai_score:
+                            type: number
+                            minimum: 0
+                            maximum: 100
+                      length:
+                        type: object
+                        properties:
+                          value:
+                            type: number
+                          ai_score:
+                            type: number
+                            minimum: 0
+                            maximum: 100
+                      width:
+                        type: object
+                        properties:
+                          value:
+                            type: number
+                          ai_score:
+                            type: number
+                            minimum: 0
+                            maximum: 100
+                      depth:
+                        type: object
+                        properties:
+                          value:
+                            type: number
+                          ai_score:
+                            type: number
+                            minimum: 0
+                            maximum: 100
+                      location:
+                        type: object
+                        properties:
+                          value:
+                            type: string
+                          ai_score:
+                            type: number
+                            minimum: 0
+                            maximum: 100
+                      description:
+                        type: object
+                        properties:
+                          value:
+                            type: string
+                          ai_score:
+                            type: number
+                            minimum: 0
+                            maximum: 100
+                      exudate:
+                        type: object
+                        properties:
+                          value:
+                            type: string
+                          ai_score:
+                            type: number
+                            minimum: 0
+                            maximum: 100
+                      progress:
+                        type: object
+                        properties:
+                          value:
+                            type: string
+                          ai_score:
+                            type: number
+                            minimum: 0
+                            maximum: 100
+                      treatment_plan:
+                        type: object
+                        properties:
+                          value:
+                            type: string
+                          ai_score:
+                            type: number
+                            minimum: 0
+                            maximum: 100
+                      additional_notes:
+                        type: object
+                        properties:
+                          value:
+                            type: string
+                          ai_score:
+                            type: number
+                            minimum: 0
+                            maximum: 100
+                physical_therapy:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      review_number:
+                        type: object
+                        properties:
+                          value:
+                            type: integer
+                          ai_score:
+                            type: number
+                            minimum: 0
+                            maximum: 100
+                      date:
+                        type: object
+                        properties:
+                          value:
+                            type: string
+                            format: date
+                          ai_score:
+                            type: number
+                            minimum: 0
+                            maximum: 100
+                      bed_mobility:
+                        type: object
+                        properties:
+                          value:
+                            type: string
+                          ai_score:
+                            type: number
+                            minimum: 0
+                            maximum: 100
+                      transfers:
+                        type: object
+                        properties:
+                          value:
+                            type: string
+                          ai_score:
+                            type: number
+                            minimum: 0
+                            maximum: 100
+                      ambulation:
+                        type: object
+                        properties:
+                          value:
+                            type: string
+                          ai_score:
+                            type: number
+                            minimum: 0
+                            maximum: 100
+                      ambulation_distance:
+                        type: object
+                        properties:
+                          value:
+                            type: string
+                          ai_score:
+                            type: number
+                            minimum: 0
+                            maximum: 100
+                      level_of_func_ambulation:
+                        type: object
+                        properties:
+                          value:
+                            type: string
+                          ai_score:
+                            type: number
+                            minimum: 0
+                            maximum: 100
+                      assistive_device:
+                        type: object
+                        properties:
+                          value:
+                            type: string
+                          ai_score:
+                            type: number
+                            minimum: 0
+                            maximum: 100
+                      level_of_func_stairs:
+                        type: object
+                        properties:
+                          value:
+                            type: string
+                          ai_score:
+                            type: number
+                            minimum: 0
+                            maximum: 100
+                      bathing:
+                        type: object
+                        properties:
+                          value:
+                            type: string
+                          ai_score:
+                            type: number
+                            minimum: 0
+                            maximum: 100
+                      dressing_upper_body:
+                        type: object
+                        properties:
+                          value:
+                            type: string
+                          ai_score:
+                            type: number
+                            minimum: 0
+                            maximum: 100
+                      dressing_lower_body:
+                        type: object
+                        properties:
+                          value:
+                            type: string
+                          ai_score:
+                            type: number
+                            minimum: 0
+                            maximum: 100
+                      toileting:
+                        type: object
+                        properties:
+                          value:
+                            type: string
+                          ai_score:
+                            type: number
+                            minimum: 0
+                            maximum: 100
+                      toilet_transfers:
+                        type: object
+                        properties:
+                          value:
+                            type: string
+                          ai_score:
+                            type: number
+                            minimum: 0
+                            maximum: 100
+                      additional_notes:
+                        type: object
+                        properties:
+                          value:
+                            type: string
+                          ai_score:
+                            type: number
+                            minimum: 0
+                            maximum: 100
+        determination:
+          type: string
+        determination_type:
+          type: string
+        status:
+          type: object
+          properties:
+            current_status:
+              type: string
+            assigned_user:
+              type: string
+            created_at:
+              type: string
+              format: date-time
+            updated_at:
+              type: string
+              format: date-time
+        documents:
+          type: array
+          items:
+            type: object
+
+    ClinicalCaseSubmission:
+      type: object
+      required:
+        - auth_number
+        - determination
+      properties:
+        auth_number:
+          type: string
+        member_info:
+          type: object
+          properties:
+            member_name:
+              type: string
+              example: "John Doe"
+            dob:
+              type: string
+              example: "1980-01-15"
+            health_plan_id:
+              type: string
+              example: "HP123456"
+            health_plan:
+              type: string
+              example: "Blue Cross"
+            authorization_number:
+              type: string
+              example: "AUTH-2024-1234"
+        contact_info:
+          type: object
+          properties:
+            request_method:
+              type: string
+              example: "Phone"
+            contact_name:
+              type: string
+            contact_phone:
+              type: string
+            contact_facility:
+              type: string
+            contact_fax:
+              type: string
+            contact_email:
+              type: string
+        clinical_info:
+          type: object
+          properties:
+            template:
+              type: string
+            review_type:
+              type: string
+              enum: [pre_service, concurrent, retrospective]
+              example: "pre_service"
+            priority:
+              type: string
+              enum: [urgent, expedited, standard]
+              example: "standard"
+            brief_clinical_course:
+              type: string
+            past_medical_history:
+              type: string
+            skilled_needs:
+              type: string
+            radiology_diagnostics:
+              type: string
+            ventilator:
+              type: string
+            speech_therapy:
+              type: string
+            last_therapy_certification:
+              type: string
+            discharge_plan_barriers:
+              type: string
+            assessment_plan:
+              type: string
+            concurrent_updates:
+              type: string
+            additional_notes:
+              type: string
+            readmission:
+              type: string
+            criteria:
+              type: string
+            medications:
+              type: array
+              items:
+                type: object
+                properties:
+                  medications_iv_fluids:
+                    type: string
+                  cpt_hcps:
+                    type: string
+                  dose_requested:
+                    type: number
+                  frequency:
+                    type: number
+                  frequency_type:
+                    type: string
+                    enum: [days, weeks, months]
+                  frequency_duration:
+                    type: number
+                  description_dose:
+                    type: number
+                  total_units:
+                    type: number
+                  unit_type:
+                    type: string
+            wounds:
+              type: array
+              items:
+                type: object
+                properties:
+                  duration:
+                    type: string
+                  length:
+                    type: number
+                  width:
+                    type: number
+                  depth:
+                    type: number
+                  location:
+                    type: string
+                  description:
+                    type: string
+                  exudate:
+                    type: string
+                  progress:
+                    type: string
+                  treatment_plan:
+                    type: string
+                  additional_notes:
+                    type: string
+            physical_therapy:
+              type: array
+              items:
+                type: object
+                properties:
+                  review_number:
+                    type: integer
+                  date:
+                    type: string
+                    format: date
+                  bed_mobility:
+                    type: string
+                  transfers:
+                    type: string
+                  ambulation:
+                    type: string
+                  ambulation_distance:
+                    type: string
+                  level_of_func_ambulation:
+                    type: string
+                  assistive_device:
+                    type: string
+                  level_of_func_stairs:
+                    type: string
+                  bathing:
+                    type: string
+                  dressing_upper_body:
+                    type: string
+                  dressing_lower_body:
+                    type: string
+                  toileting:
+                    type: string
+                  toilet_transfers:
+                    type: string
+                  additional_notes:
+                    type: string
+        determination:
+          type: string
+          enum: [approved, denied, partially_approved, sent_to_md]
+        determination_type:
+          type: string
+        documents:
+          type: array
+          items:
+            type: object
+
+    # ==========================================================================
+    # MEDICAL DIRECTOR SCHEMAS
+    # ==========================================================================
+    MedicalDirectorQueueResponse:
+      type: object
+      properties:
+        cases:
+          type: array
+          items:
+            $ref: '#/components/schemas/MedicalDirectorQueueItem'
+        pagination:
+          $ref: '#/components/schemas/PaginationInfo'
+
+    MedicalDirectorQueueItem:
+      type: object
+      properties:
+        auth_number:
+          type: string
+        member_name:
+          type: string
+        dob:
+          type: string
+          format: date
+        escalation_date:
+          type: string
+          format: date-time
+        escalation_type:
+          type: string
+          enum: [nurse_review, appeal, complex_case, second_opinion]
+        priority:
+          type: string
+          enum: [urgent, expedited, standard]
+        lapse_time:
+          type: string
+        original_reviewer:
+          type: string
+        template:
+          type: string
+        complexity:
+          type: string
+          enum: [high, medium, standard]
+        status:
+          type: string
+          enum: [new, in_progress, completed]
+
+    MedicalDirectorCaseDetails:
+      type: object
+      properties:
+        auth_number:
+          type: string
+        member_info:
+          $ref: '#/components/schemas/MemberInfo'
+        contact_info:
+          $ref: '#/components/schemas/ContactInfo'
+        clinical_info:
+          $ref: '#/components/schemas/ClinicalInfo'
+        nurse_review:
+          $ref: '#/components/schemas/NurseReviewSummary'
+        escalation_info:
+          $ref: '#/components/schemas/EscalationInfo'
+        status:
+          $ref: '#/components/schemas/CaseStatus'
+        documents:
+          type: array
+          items:
+            $ref: '#/components/schemas/DocumentInfo'
+
+    MedicalDirectorReviewSubmission:
+      type: object
+      required:
+        - auth_number
+        - md_determination
+        - md_note
+      properties:
+        auth_number:
+          type: string
+        md_note:
+          type: string
+          description: Medical director's clinical assessment and rationale
+        md_determination:
+          type: string
+          enum: [approved, partially_approved, denied]
+        denial_rationale:
+          type: string
+          description: Simple language rationale for denial or partial approval (used in member letters)
+        additional_notes:
+          type: string
+          description: Additional clinical notes or administrative comments
+
+    NurseReviewSummary:
+      type: object
+      properties:
+        reviewer_name:
+          type: string
+          example: "Sarah Johnson, RN"
+        review_date:
+          type: string
+          format: date-time
+        initial_determination:
+          type: string
+          enum: [sent_to_md]
+        clinical_rationale:
+          type: string
+        escalation_reason:
+          type: string
+
+    EscalationInfo:
+      type: object
+      properties:
+        escalation_type:
+          type: string
+          enum: [nurse_review, appeal, complex_case, second_opinion]
+        escalation_date:
+          type: string
+          format: date-time
+        escalated_by:
+          type: string
+        reason:
+          type: string
+        complexity:
+          type: string
+          enum: [high, medium, standard]
+
+    # ==========================================================================
+    # APPEALS & GRIEVANCES SCHEMAS
+    # ==========================================================================
+    AppealsGrievancesQueueResponse:
+      type: object
+      properties:
+        cases:
+          type: array
+          items:
+            $ref: '#/components/schemas/AppealsGrievancesQueueItem'
+        pagination:
+          $ref: '#/components/schemas/PaginationInfo'
+
+    AppealsGrievancesQueueItem:
+      type: object
+      properties:
+        case_id:
+          type: string
+        member_name:
+          type: string
+        dob:
+          type: string
+          format: date
+        received_date:
+          type: string
+          format: date-time
+        case_type:
+          type: string
+          enum: [appeal, grievance]
+        category:
+          type: string
+          enum: [quality_of_care, access_to_care, customer_service, billing_claims, coverage_benefits, provider_network]
+        priority:
+          type: string
+          enum: [urgent, expedited, standard]
+        lapse_time:
+          type: string
+        requestor:
+          type: string
+          enum: [member, provider, member_representative]
+        status:
+          type: string
+          enum: [received, under_review, pending_info, completed]
+        assigned_to:
+          type: string
+
+    AppealsGrievancesCaseDetails:
+      type: object
+      properties:
+        case_id:
+          type: string
+        member_info:
+          $ref: '#/components/schemas/MemberInfo'
+        case_info:
+          $ref: '#/components/schemas/AppealsGrievancesCaseInfo'
+        contact_info:
+          $ref: '#/components/schemas/ContactInfo'
+        review_details:
+          $ref: '#/components/schemas/AppealsGrievancesReviewDetails'
+        status:
+          $ref: '#/components/schemas/CaseStatus'
+        documents:
+          type: array
+          items:
+            $ref: '#/components/schemas/DocumentInfo'
+
+    AppealsGrievancesCaseCreate:
+      type: object
+      required:
+        - case_type
+        - member_info
+        - category
+        - priority
+      properties:
+        case_type:
+          type: string
+          enum: [appeal, grievance]
+        member_info:
+          $ref: '#/components/schemas/MemberInfo'
+        category:
+          type: string
+          enum: [quality_of_care, access_to_care, customer_service, billing_claims, coverage_benefits, provider_network]
+        priority:
+          type: string
+          enum: [urgent, expedited, standard]
+        requestor:
+          type: string
+          enum: [member, provider, member_representative]
+        description:
+          type: string
+        received_date:
+          type: string
+          format: date-time
+
+    AppealsGrievancesCaseUpdate:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [received, under_review, pending_info, completed]
+        notes:
+          type: string
+        assigned_to:
+          type: string
+
+    AppealsGrievancesCaseInfo:
+      type: object
+      properties:
+        case_type:
+          type: string
+          enum: [appeal, grievance]
+        category:
+          type: string
+          enum: [quality_of_care, access_to_care, customer_service, billing_claims, coverage_benefits, provider_network]
+        priority:
+          type: string
+          enum: [urgent, expedited, standard]
+        requestor:
+          type: string
+          enum: [member, provider, member_representative]
+        description:
+          type: string
+        received_date:
+          type: string
+          format: date-time
+        due_date:
+          type: string
+          format: date-time
+        original_determination:
+          type: string
+        original_determination_date:
+          type: string
+          format: date-time
+
+    AppealsGrievancesReviewDetails:
+      type: object
+      properties:
+        reviewer_name:
+          type: string
+        review_date:
+          type: string
+          format: date-time
+        investigation_summary:
+          type: string
+        resolution:
+          type: string
+          enum: [upheld, overturned, partially_upheld, withdrawn]
+        resolution_rationale:
+          type: string
+        corrective_actions:
+          type: string
+        member_notification:
+          type: object
+          properties:
+            notification_sent:
+              type: boolean
+            notification_date:
+              type: string
+              format: date-time
+            notification_method:
+              type: string
+              enum: [mail, email, phone, portal]
+
+    AppealsGrievancesReviewSubmission:
+      type: object
+      required:
+        - case_id
+        - resolution
+        - resolution_rationale
+      properties:
+        case_id:
+          type: string
+        investigation_summary:
+          type: string
+        resolution:
+          type: string
+          enum: [upheld, overturned, partially_upheld, withdrawn]
+        resolution_rationale:
+          type: string
+        corrective_actions:
+          type: string
+        additional_notes:
+          type: string
+
+    # ==========================================================================
+    # SHARED SCHEMAS
+    # ==========================================================================
+    MemberInfo:
+      type: object
+      properties:
+        member_name:
+          type: string
+          example: "John Doe"
+        dob:
+          type: string
+          example: "1980-01-15"
+        health_plan_id:
+          type: string
+          example: "HP123456"
+        health_plan:
+          type: string
+          example: "Blue Cross"
+        authorization_number:
+          type: string
+          example: "AUTH-2024-1234"
+
+    ContactInfo:
+      type: object
+      properties:
+        request_method:
+          type: string
+          enum: [phone, fax, email, portal]
+          example: "Phone"
+        contact_name:
+          type: string
+        contact_phone:
+          type: string
+        contact_facility:
+          type: string
+        contact_fax:
+          type: string
+        contact_email:
+          type: string
+          format: email
+
+    ClinicalInfo:
+      type: object
+      properties:
+        template:
+          type: string
+        review_type:
+          type: string
+          enum: [pre_service, concurrent, retrospective]
+        priority:
+          type: string
+          enum: [urgent, expedited, standard]
+          default: standard
+        brief_clinical_course:
+          type: string
+        past_medical_history:
+          type: string
+        skilled_needs:
+          type: string
+        radiology_diagnostics:
+          type: string
+        ventilator:
+          type: string
+        speech_therapy:
+          type: string
+        last_therapy_certification:
+          type: string
+        discharge_plan_barriers:
+          type: string
+        assessment_plan:
+          type: string
+        concurrent_updates:
+          type: string
+        additional_notes:
+          type: string
+        readmission:
+          type: string
+        criteria:
+          type: string
+        medications:
+          type: object
+          properties:
+            medications_iv_fluids:
+              type: string
+            medication_list:
+              type: array
+              items:
+                $ref: '#/components/schemas/MedicationCalculation'
+        wounds:
+          type: array
+          items:
+            $ref: '#/components/schemas/WoundAssessment'
+        physical_therapy:
+          type: array
+          items:
+            $ref: '#/components/schemas/PhysicalTherapyAssessment'
+
+    CaseStatus:
+      type: object
+      properties:
+        current_status:
+          type: string
+        assigned_user:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    DocumentInfo:
+      type: object
+      properties:
+        document_id:
+          type: string
+        document_type:
+          type: string
+        file_name:
+          type: string
+        blob_url:
+          type: string
+        uploaded_at:
+          type: string
+          format: date-time
+        uploaded_by:
+          type: string
+
+    AIExtractionData:
+      type: object
+      properties:
+        member_info:
+          $ref: '#/components/schemas/MemberInfo'
+        contact_info:
+          $ref: '#/components/schemas/ContactInfo'
+        clinical_info:
+          $ref: '#/components/schemas/ClinicalInfo'
+
+    MedicationCalculation:
+      type: object
+      properties:
+        cpt_hcps:
+          type: string
+        dose_requested:
+          type: number
+        frequency:
+          type: number
+        frequency_type:
+          type: string
+          enum: [days, weeks, months]
+        frequency_duration:
+          type: number
+        description_dose:
+          type: number
+        total_units:
+          type: number
+        unit_type:
+          type: string
+
+    Medication:
+      type: object
+      properties:
+        cpt_hcps:
+          type: string
+        dose_requested:
+          type: number
+        frequency:
+          type: number
+        frequency_type:
+          type: string
+          enum: [days, weeks, months]
+        frequency_duration:
+          type: number
+        description_dose:
+          type: number
+        total_units:
+          type: number
+        additional_notes:
+          type: string
+
+    WoundAssessment:
+      type: object
+      properties:
+        duration:
+          type: string
+        length:
+          type: number
+        width:
+          type: number
+        depth:
+          type: number
+        location:
+          type: string
+        description:
+          type: string
+        exudate:
+          type: string
+        progress:
+          type: string
+        treatment_plan:
+          type: string
+        additional_notes:
+          type: string
+
+    PhysicalTherapyAssessment:
+      type: object
+      properties:
+        review_number:
+          type: integer
+        date:
+          type: string
+          format: date
+        bed_mobility:
+          type: string
+        transfers:
+          type: string
+        ambulation:
+          type: string
+        ambulation_distance:
+          type: string
+        level_of_func_ambulation:
+          type: string
+        assistive_device:
+          type: string
+        level_of_func_stairs:
+          type: string
+        bathing:
+          type: string
+        dressing_upper_body:
+          type: string
+        dressing_lower_body:
+          type: string
+        toileting:
+          type: string
+        toilet_transfers:
+          type: string
+        additional_notes:
+          type: string
+
+    PaginationInfo:
+      type: object
+      properties:
+        page:
+          type: integer
+          example: 1
+        page_size:
+          type: integer
+          example: 10
+        total_items:
+          type: integer
+          example: 150
+        total_pages:
+          type: integer
+          example: 15
+        has_next:
+          type: boolean
+          example: true
+        has_previous:
+          type: boolean
+          example: false
+
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+          example: "error_code"
+        message:
+          type: string
+          example: "Detailed error message"
+        details:
+          type: object
+          additionalProperties: true
+        timestamp:
+          type: string
+          format: date-time
+
+    ValidationError:
+      type: object
+      properties:
+        error:
+          type: string
+          example: "validation_error"
+        message:
+          type: string
+          example: "Validation failed"
+        errors:
+          type: array
+          items:
+            type: object
+            properties:
+              field:
+                type: string
+                example: "member_name"
+              message:
+                type: string
+                example: "Member name is required"
+        timestamp:
+          type: string
+          format: date-time
+
+  # =============================================================================
+  # RESPONSES
+  # =============================================================================
+  responses:
+    UnauthorizedError:
+      description: Authentication required or token invalid
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error: "unauthorized"
+            message: "Authentication required. Please login."
+            timestamp: "2025-10-27T10:30:00Z"
+
+    ForbiddenError:
+      description: User does not have permission to access this resource
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error: "forbidden"
+            message: "You do not have permission to access this resource"
+            timestamp: "2025-10-27T10:30:00Z"
+
+    NotFoundError:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error: "not_found"
+            message: "The requested resource was not found"
+            timestamp: "2025-10-27T10:30:00Z"
+
+    BadRequestError:
+      description: Invalid request parameters
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error: "bad_request"
+            message: "Invalid request parameters"
+            timestamp: "2025-10-27T10:30:00Z"
+
+    ValidationError:
+      description: Request validation failed
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ValidationError'
+          example:
+            error: "validation_error"
+            message: "Validation failed"
+            errors:
+              - field: "member_name"
+                message: "Member name is required"
+              - field: "dob"
+                message: "Date of birth must be in YYYY-MM-DD format"
+            timestamp: "2025-10-27T10:30:00Z"
